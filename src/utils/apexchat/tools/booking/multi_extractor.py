@@ -76,7 +76,13 @@ class MultiStepIntent(BaseModel):
     )
     teacher_query: str | None = Field(
         default=None,
-        description="User's reference to a teacher / tutor (e.g. 'Bob', 'Mr. Smith'). Null if not mentioned.",
+        description=(
+            "The PROPER NAME of a specific teacher/tutor the user named "
+            "(e.g. 'Bob', 'Mr. Smith', 'Sarah Khoury'). Null unless an actual "
+            "person's name is given. Do NOT fill this from generic role phrases "
+            "like 'a good arabic teacher', 'a math tutor', or 'any teacher' — the "
+            "subject in those belongs in subject_query and teacher_query stays null."
+        ),
     )
 
     slot_date: str | None = Field(
@@ -146,6 +152,9 @@ Rules:
     those against its own option list — do not normalise or pick an index.
   - For slot_date / slot_time: only fill them if the user wrote an explicit date
     or HH:mm time. Vague references ("any morning") stay null.
+  - teacher_query: ONLY a specific person's name. Never a generic phrase such as
+    "a good arabic teacher" or "a math tutor" — the subject in those goes to
+    subject_query and teacher_query stays null.
   - skip_description / skip_invitees default false; flip them only on explicit
     decline.
   - cancel = true only on a clear abort ("cancel", "never mind", "stop").
@@ -191,12 +200,21 @@ _MULTI_KEYWORDS = (
 )
 
 
+# Role words that, on their own, signal a booking request that names a field
+# (e.g. "find me a robotics teacher", "I want a chemistry tutor"). The subject
+# can be anything in the catalogue, so we don't rely on a fixed subject list to
+# decide whether to run the extractor — any of these is enough.
+_ROLE_WORDS = ("teacher", "tutor", "course", "class", "lesson", "learn", "study")
+
+
 def looks_multi_step(message: str) -> bool:
     """
     True when the message is worth running through the multi-extractor.
 
-    Conservative: must be at least 4 words AND either contain a comma, a
-    conjunction, or two recognised keywords.
+    Fires on at least 4 words AND any of: a comma, a conjunction, a booking
+    role word (teacher/tutor/course/…), or two recognised subject keywords.
+    The role-word check lets "find me a robotics teacher" trigger extraction
+    even though "robotics" isn't in the static subject keyword list.
     """
     msg = (message or "").strip().lower()
     if len(msg.split()) < 4:
@@ -205,6 +223,9 @@ def looks_multi_step(message: str) -> bool:
     if "," in msg:
         return True
     if " and " in msg or " with " in msg or " plus " in msg:
+        return True
+
+    if any(w in msg for w in _ROLE_WORDS):
         return True
 
     matched = sum(1 for kw in _MULTI_KEYWORDS if kw in msg)

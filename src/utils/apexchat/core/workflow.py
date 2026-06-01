@@ -89,6 +89,9 @@ Available tools:
 - rag: Handles ALL questions about the tutoring platform AND document Q&A including:
   * Platform knowledge — ANY question about the platform itself:
     - Tutors / teachers / instructors ("who are the tutors?", "tell me about the teachers", "what tutors do you have?")
+      (NOTE: this is ONLY for questions ASKING ABOUT existing tutors. If the user wants to FIND, GET, or be
+       matched with a tutor/teacher for a learner — e.g. "find my son an Arabic teacher", "I need a math tutor",
+       "I'm looking for a chemistry teacher" — that is a booking intent and MUST route to `booking`, NOT rag.)
     - Subjects / courses ("what subjects do you offer?", "do you have math tutoring?", "available courses")
     - Grade levels ("what levels do you support?", "do you teach high school?")
     - How booking works ("how do I book a session?", "what is the booking process?", "how does it work?")
@@ -104,6 +107,9 @@ Available tools:
     route here whenever the user asks for information about themselves that they have previously shared with the assistant, or asks for their preferences or any personal facts they have mentioned in past conversations.
 - booking: Handles ALL tutoring session booking requests including:
   * Expressing intent to book ("I want to book a session", "book a tutor", "schedule a lesson")
+  * Wanting to FIND, GET, or be matched with a tutor/teacher for a learner — these are booking intents,
+    NOT knowledge questions ("find me a tutor", "I need a teacher for my son", "find my son a good Arabic teacher",
+    "I'm looking for a math teacher", "we need a chemistry tutor", "help me find an English teacher")
   * Any message that occurs WITHIN an active booking conversation (choosing a level, subject,
     teacher, time slot, confirming a booking, etc.)
   * Wallet inquiries related to booking ("I recharged my wallet", "I topped up")

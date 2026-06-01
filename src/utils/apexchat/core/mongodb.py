@@ -478,3 +478,22 @@ async def fetch_all_subjects_for_knowledge() -> list[dict[str, Any]]:
         _str_id(doc)
         subjects.append(doc)
     return subjects
+
+
+async def fetch_all_subjects() -> list[dict[str, Any]]:
+    """Return every active subject with its level associations, across ALL levels.
+
+    Used by the booking flow's subject-first routing: when the user names a
+    subject before choosing a level, we look up which level(s) offer it. Both
+    `_id` and every entry in `levelIds` are returned as plain strings.
+    """
+    db = get_db()
+    out: list[dict[str, Any]] = []
+    async for doc in db.subjects.find(
+        {"isActive": True},
+        {"_id": 1, "name": 1, "levelIds": 1},
+    ):
+        _str_id(doc)
+        doc["levelIds"] = [str(x) for x in doc.get("levelIds", [])]
+        out.append(doc)
+    return out

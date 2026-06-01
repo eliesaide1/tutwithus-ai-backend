@@ -20,7 +20,7 @@ from utils.apexchat.tools.general import BaseTool
 
 from . import services
 from .errors import BookingError, InvalidTransitionError
-from .machine import advance, is_terminal, reset, rewind
+from .machine import advance, is_terminal, reset, rewind, step_index
 from .matching import is_cancel
 from .multi_extractor import (
     HINT_CURRICULUM,
@@ -67,6 +67,14 @@ _CAPTURE_ORDER: tuple[tuple[str, BookingStep], ...] = (
     (HINT_DESCRIPTION, BookingStep.AWAITING_DESCRIPTION),
     (HINT_INVITEES, BookingStep.AWAITING_INVITEES),
 )
+
+# Each hint maps to the step that consumes it. Used to decide which leftover
+# hints to keep at end of turn: a hint for a step we haven't reached yet (e.g.
+# the user named the subject before picking a level) must survive to a later
+# turn; a hint for the current or an earlier step is stale and dropped.
+_HINT_STEP_INDEX: dict[str, int] = {
+    hint_key: step_index(step) for hint_key, step in _CAPTURE_ORDER
+}
 
 
 def _captured_summary(
@@ -259,6 +267,12 @@ class BookingTool(BaseTool):
                     state.user_message = ""
                     message = ""
 
+        # ── Subject-first routing ────────────────────────────────────────────
+        # If the user named a subject before a level ("find a robotics teacher"),
+        # resolve which level(s) offer it so we never ask for the subject again
+        # and skip the level question entirely when the subject is unambiguous.
+        await self._maybe_subject_first(state, bs)
+
         # ── Step dispatch loop ───────────────────────────────────────────────
         responses: list[str] = []
         applied_hints: list[str] = []
@@ -291,17 +305,71 @@ class BookingTool(BaseTool):
             # to render the next step's `present()` text in the same turn.
             state.user_message = ""
 
-        # Drop any leftover hints — they belonged to steps we didn't reach
-        # because an earlier hint failed validation. The user will be asked
-        # for the next field through the normal flow on the following turn.
+        # Keep hints for steps we haven't reached yet, so a field the user named
+        # ahead of time (e.g. the subject before choosing a level) is applied
+        # automatically once the flow advances to its step on a later turn.
+        # Drop hints for the current or earlier steps — those are stale (the
+        # step ran this turn without consuming them). A hint that failed
+        # validation already cleared the whole chain inside the step handler.
         if bs.pending_hints:
-            bs.pending_hints.clear()
+            current_idx = step_index(bs.step)
+            bs.pending_hints = {
+                key: val
+                for key, val in bs.pending_hints.items()
+                if _HINT_STEP_INDEX.get(key, -1) > current_idx
+            }
 
         prefix = _captured_summary(bs, applied_hints)
         body = "\n\n".join(r for r in responses if r)
         if prefix and body:
             return f"{prefix}\n\n{body}"
         return prefix or body
+
+    async def _maybe_subject_first(self, state: WorkflowState, bs: BookingState) -> None:
+        """
+        Subject-first routing. When the user named a subject before choosing a
+        level, resolve the level(s) that offer it:
+
+          * exactly one level  → auto-select it and advance to the subject step,
+            where the pending subject hint is applied automatically (so neither
+            the level nor the subject is asked — e.g. "robotics" → Extracurricular).
+          * several levels      → narrow the level menu to just those levels and
+            keep the subject hint pending; the user picks a level and the subject
+            auto-applies right after (so the subject is never asked).
+
+        Unknown subjects are left untouched — the normal level→subject flow runs.
+        """
+        if bs.step != BookingStep.AWAITING_LEVEL or bs.level_id:
+            return
+        subject_query = bs.pending_hints.get(HINT_SUBJECT)
+        if not isinstance(subject_query, str) or not subject_query.strip():
+            return
+
+        try:
+            subject_doc, levels = await services.resolve_subject_first(subject_query)
+        except Exception as exc:
+            logger.warning(
+                "subject_first_resolution_failed",
+                session_id=state.session_id,
+                error=str(exc),
+            )
+            return
+
+        if not subject_doc or not levels:
+            return
+
+        if len(levels) == 1:
+            from .steps import LevelStep
+            LevelStep().apply_candidate(levels[0], bs)
+            bs.cached_levels = levels
+            try:
+                advance(bs, BookingStep.AWAITING_SUBJECT, trigger="subject_first_autolevel")
+            except InvalidTransitionError:
+                return
+        else:
+            # Restrict the level menu to the levels that actually offer this
+            # subject; the subject hint stays pending and applies after the pick.
+            bs.cached_levels = levels
 
     async def _enter_flow(self, state: WorkflowState, bs: BookingState) -> None:
         """Run wallet check then transition to AWAITING_LEVEL or WALLET_NEEDED."""
