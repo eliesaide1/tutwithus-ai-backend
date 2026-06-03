@@ -164,6 +164,14 @@ class BookingState(BaseModel):
     # Cleared on cancel / completion via `machine.reset()`.
     pending_hints: dict[str, Any] = Field(default_factory=dict)
 
+    # Transient: when the user named a time up-front ("find an English teacher at
+    # 1pm"), the teacher list is filtered to tutors with a slot at that time.
+    # `tutor_time_filter` holds the time (HH:mm UTC) the list is filtered to;
+    # `tutor_time_missed` holds a requested time that matched NO tutor (so we
+    # fall back to the full list and tell the user). Both cleared by reset().
+    tutor_time_filter: str | None = None
+    tutor_time_missed: str | None = None
+
 
 # ── Rescheduling State Models ─────────────────────────────────────────────────
 

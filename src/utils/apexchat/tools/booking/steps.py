@@ -173,6 +173,31 @@ def _present(bs: BookingState) -> str:
     return handler.present(bs)
 
 
+def _pending_slot_time_date(bs: BookingState) -> tuple[str | None, str | None]:
+    """Peek (without consuming) any time/date the user named up-front for the slot.
+
+    Lets the teacher step pre-filter tutors by a requested time ("at 1pm") while
+    leaving the hint in place for the slot step to auto-apply later.
+    """
+    hint = bs.pending_hints.get(HINT_SLOT)
+    if isinstance(hint, dict):
+        return hint.get("time"), hint.get("date")
+    return None, None
+
+
+def _drop_slot_time_hint(bs: BookingState) -> None:
+    """Remove a requested time from the pending slot hint (when no tutor matched).
+
+    Keeps any date/index the user also gave; drops the whole hint if nothing is
+    left so the slot step doesn't try to auto-pick an impossible time.
+    """
+    hint = bs.pending_hints.get(HINT_SLOT)
+    if isinstance(hint, dict):
+        hint.pop("time", None)
+        if not hint:
+            bs.pending_hints.pop(HINT_SLOT, None)
+
+
 # ── Base ──────────────────────────────────────────────────────────────────────
 
 class StepHandler:
@@ -524,9 +549,29 @@ class TeacherStep(StepHandler):
         if not (bs.level_id and bs.subject_id):
             raise StepDataError("Let's finish picking the level and subject first.", code="missing_prereqs")
         if not bs.cached_tutors:
+            # Recomputed fresh each time the tutor list is (re)built.
+            bs.tutor_time_filter = None
+            bs.tutor_time_missed = None
+
+            # If the user named a time up-front ("at 1pm"), show only tutors who
+            # have a slot then. The slot hint stays pending so the slot step can
+            # auto-apply that time once a teacher is chosen.
+            at_time, at_date = _pending_slot_time_date(bs)
             bs.cached_tutors = await services.list_tutors(
-                bs.level_id, bs.subject_id, bs.curriculum_code
+                bs.level_id, bs.subject_id, bs.curriculum_code,
+                at_time=at_time, at_date=at_date,
             )
+            if at_time and not bs.cached_tutors:
+                # No teacher free at the requested time — fall back to the full
+                # list (so we never dead-end), drop the unusable time hint, and
+                # flag it so the prompt can explain.
+                bs.cached_tutors = await services.list_tutors(
+                    bs.level_id, bs.subject_id, bs.curriculum_code
+                )
+                _drop_slot_time_hint(bs)
+                bs.tutor_time_missed = at_time
+            elif at_time:
+                bs.tutor_time_filter = at_time
         if not bs.cached_tutors:
             if bs.requires_curriculum and bs.curriculum_code:
                 rewind(bs, BookingStep.AWAITING_CURRICULUM, trigger="no_tutors_for_curriculum")
@@ -576,7 +621,17 @@ class TeacherStep(StepHandler):
         return None
 
     def present(self, bs: BookingState) -> str:
-        return f"Who would you like to learn with?\n\n{format_tutors(bs.cached_tutors)}"
+        subject = bs.subject_name or ""
+        if bs.tutor_time_filter:
+            header = f"Here are the {subject} teachers available at {bs.tutor_time_filter} UTC:".replace("  ", " ")
+        elif bs.tutor_time_missed:
+            header = (
+                f"I couldn't find a teacher with a free slot at {bs.tutor_time_missed} UTC. "
+                f"Here are all available {subject} teachers — pick one and I'll show their times:"
+            ).replace("  ", " ")
+        else:
+            header = "Who would you like to learn with?"
+        return f"{header}\n\n{format_tutors(bs.cached_tutors)}"
 
 
 # ── Slot ──────────────────────────────────────────────────────────────────────

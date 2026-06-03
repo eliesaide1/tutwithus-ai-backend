@@ -76,8 +76,36 @@ async def list_curricula(level_id: str, subject_id: str) -> list[str]:
     return await fetch_curricula(level_id, subject_id)
 
 
-async def list_tutors(level_id: str, subject_id: str, curriculum: str | None) -> list[dict[str, Any]]:
-    return await fetch_tutors(level_id, subject_id, curriculum)
+async def list_tutors(
+    level_id: str,
+    subject_id: str,
+    curriculum: str | None,
+    *,
+    at_time: str | None = None,
+    at_date: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Return tutors for the given level/subject(/curriculum).
+
+    When `at_time` (HH:mm, UTC) and/or `at_date` (YYYY-MM-DD) are supplied — e.g.
+    the user said "find an English teacher at 1pm" — the list is narrowed to
+    tutors who have at least one ACTIVE future slot starting at that time/date.
+    With no filter, every available tutor is returned (original behaviour).
+    """
+    tutors = await fetch_tutors(level_id, subject_id, curriculum)
+    if not at_time and not at_date:
+        return tutors
+
+    filtered: list[dict[str, Any]] = []
+    for t in tutors:
+        slots = extract_future_slots(t)
+        if any(
+            (at_time is None or s["timeFrom"] == at_time)
+            and (at_date is None or s["date"] == at_date)
+            for s in slots
+        ):
+            filtered.append(t)
+    return filtered
 
 
 async def list_tutor_slots(
