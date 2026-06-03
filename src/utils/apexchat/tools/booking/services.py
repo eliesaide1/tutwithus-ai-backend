@@ -73,7 +73,26 @@ async def list_subjects(level_id: str) -> list[dict[str, Any]]:
 
 
 async def list_curricula(level_id: str, subject_id: str) -> list[str]:
-    return await fetch_curricula(level_id, subject_id)
+    """
+    Return only curricula that actually have a BOOKABLE teacher for this
+    level+subject — i.e. at least one tutor with an active future slot.
+
+    `fetch_curricula` lists every curriculum any matching tutor *teaches*, even
+    when none of those tutors have availability. Offering those traps the user
+    in a loop: they pick a curriculum, the teacher step finds no one, and bounces
+    them back to the same dead-end list. Filtering here means every offered
+    curriculum leads to a real teacher; when none qualify we return [] so the
+    curriculum step skips the question and shows available teachers directly.
+    """
+    curricula = await fetch_curricula(level_id, subject_id)
+    if not curricula:
+        return []
+
+    bookable: list[str] = []
+    for code in curricula:
+        if await fetch_tutors(level_id, subject_id, code):
+            bookable.append(code)
+    return bookable
 
 
 async def list_tutors(
