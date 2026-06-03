@@ -184,6 +184,7 @@ def _build_initial_state(
     state.user_message = body.message
     state.file_base64 = body.file_base64
     state.object_id = body.object_id
+    state.current_path = body.current_path
     extracted_user_id = _extract_user_id_str(user_id)
     state.user_id = extracted_user_id if extracted_user_id else user_id
     state.nodes_visited = []

@@ -285,6 +285,11 @@ class WorkflowState(BaseModel):
     # Screen context sent by the front-end (used to validate KG page access)
     object_id: str | None = None
 
+    # The front-end route the user is currently on (e.g. "/en/admin/promo").
+    # Used by the navigation tool to pick the admin vs public version of a
+    # page name depending on whether the user is in the admin panel.
+    current_path: str | None = None
+
     # Raw list of payload IDs parsed from the client ``sources`` field.
     # Set by the API layer immediately — before any DB call — so it is always
     # present as a reliable routing signal even if the fetch later fails.
@@ -437,6 +442,15 @@ class ChatRequest(BaseModel):
                     "Used to validate that the user is on the correct page "
                     "for the requested operation (e.g. 67986 for wallet KG, "
                     "68199 for transactions/branch KG).",
+    )
+
+    current_path: str | None = Field(
+        default=None,
+        description="The front-end route the user is currently on (e.g. "
+                    "\"/en/admin/promo\" or \"/en/bundles\"). Used by the "
+                    "navigation tool to resolve shared page names to the admin "
+                    "vs public route depending on where the user is.",
+        examples=["/en/admin/bundles", "/en/bundles"],
     )
 
     stream: bool = Field(
