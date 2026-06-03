@@ -535,7 +535,23 @@ class TeacherStep(StepHandler):
                     f"{format_curricula(bs.cached_curricula)}",
                     code="no_tutors",
                 )
+            failed_subject_id = bs.subject_id
             rewind(bs, BookingStep.AWAITING_SUBJECT, trigger="no_tutors_for_subject")
+            # Don't offer the subject that just dead-ended — re-listing it (e.g.
+            # "Robotics" with no available tutor) would only loop the user back
+            # to the same "no teachers" message.
+            if failed_subject_id:
+                bs.cached_subjects = [
+                    s for s in bs.cached_subjects if s.get("_id") != failed_subject_id
+                ]
+            if not bs.cached_subjects:
+                # Every subject at this level is unbookable — go back to levels.
+                rewind(bs, BookingStep.AWAITING_LEVEL, trigger="no_bookable_subjects")
+                raise StepDataError(
+                    "There are no teachers available for that level right now. "
+                    f"Let's pick a different level.\n\n{format_levels(bs.cached_levels)}",
+                    code="no_tutors",
+                )
             raise StepDataError(
                 "No teachers are available for that subject. Please pick a different one.\n\n"
                 f"{format_subjects(bs.cached_subjects)}",
