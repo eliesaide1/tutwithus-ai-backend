@@ -165,6 +165,36 @@ _RESCHEDULING_ESCAPE_PHRASES = (
     "change my appointment", "change the booking",
 )
 
+# ── Deterministic booking-intent guard ────────────────────────────────────────
+# gpt-4o-mini frequently misroutes "find/get/need a tutor for my son" to `rag`
+# because the sentence mentions "teacher"/"tutor". But an ACTION verb
+# (find/get/need/looking for/book/hire) applied to a tutor/teacher is an
+# unambiguous NEW booking intent, so we force the booking tool and skip the LLM.
+#
+# We deliberately do NOT match interrogative/how-to questions ("who are the
+# tutors?", "how do I book?", "tell me about the teachers") — those are genuine
+# platform-knowledge questions and must keep flowing to the LLM router (→ rag).
+_BOOKING_INTENT_RE = re.compile(
+    r"\b(find|get|match|need|hire|arrange|book|looking for|want)\b"
+    r"(?:(?!\bhow\b)[^.?!]){0,60}?"
+    r"\b(tutor|teacher|instructor)\b",
+    re.IGNORECASE,
+)
+_RAG_QUESTION_PREFIX_RE = re.compile(
+    r"^\s*(who|what|which|where|when|tell me|do you|does|is there|are there|"
+    r"how\s+(do|does|can|much|many))\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_new_booking_intent(msg: str) -> bool:
+    """True for explicit 'find/get/need a tutor' phrasing, False for knowledge questions."""
+    if not msg or not msg.strip():
+        return False
+    if _RAG_QUESTION_PREFIX_RE.search(msg):
+        return False
+    return bool(_BOOKING_INTENT_RE.search(msg))
+
 
 def _cancel_active_flow(state: WorkflowState, locked_tool: ToolType) -> None:
     """Silently reset whichever multi-turn flow is currently active."""
@@ -332,6 +362,24 @@ async def orchestrate_node(state: WorkflowState) -> WorkflowState:
             "Flow lock active — orchestrator bypassed",
             session_id=state.session_id,
             locked_tool=locked_tool.value,
+        )
+        return state
+
+    # ── Deterministic booking-intent guard ───────────────────────────────────
+    # Force the booking tool for explicit "find/get/need a tutor" phrasing so the
+    # LLM router can't misroute it to `rag` just because it mentions "teacher".
+    if _looks_like_new_booking_intent(state.user_message):
+        state.routing_decision = RoutingDecision(
+            tool=ToolType.BOOKING,
+            confidence=RoutingConfidence.HIGH,
+            reasoning="Deterministic guard: explicit find/get/need-a-tutor booking intent.",
+            requires_clarification=False,
+        )
+        emit_status("routing_complete", tool=ToolType.BOOKING.value, confidence="high")
+        logger.info(
+            "Booking-intent guard matched — routing to booking",
+            session_id=state.session_id,
+            message_preview=state.user_message[:80],
         )
         return state
 
